@@ -1,0 +1,56 @@
+# ==============================================================================
+# Dockerfile.bin3c
+# bin3C (https://github.com/cerebis/bin3C) — Branch B alternative used for
+# metagenomic / complex-community Hi-C contact binning (contig-level, not
+# chromosome-level). Python 2-era tool historically, but the maintained
+# branch targets Python 3 — pin the exact commit/tag you validate against.
+#
+# Build:   docker build -t bin3c:latest -f Dockerfile.bin3c .
+# Convert: singularity build bin3c_latest.sif docker-daemon://bin3c:latest
+# ==============================================================================
+FROM condaforge/mambaforge:23.3.1-1
+
+LABEL org.opencontainers.image.title="bin3C" \
+      org.opencontainers.image.source="https://github.com/cerebis/bin3C"
+
+SHELL ["/bin/bash", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        ca-certificates \
+        build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# bin3C's dependency set (numpy/scipy/pysam/networkx/python-louvain/tqdm/
+# PyYAML/biopython) per its setup.py — installed via conda-forge/bioconda
+# for compiled deps (pysam, htslib) plus pip for the package itself, since
+# bin3C is not published on bioconda/PyPI as an installable package.
+RUN mamba create -y -n bin3c -c bioconda -c conda-forge \
+        python=3.9 \
+        numpy \
+        scipy \
+        pysam \
+        networkx \
+        pyyaml \
+        tqdm \
+        biopython \
+        bwa \
+        samtools \
+    && mamba clean -afy
+
+ENV PATH=/opt/conda/envs/bin3c/bin:${PATH}
+
+RUN /opt/conda/envs/bin3c/bin/pip install python-louvain
+
+ARG BIN3C_COMMIT=master
+RUN git clone --depth 1 https://github.com/cerebis/bin3C.git /opt/bin3C \
+    && cd /opt/bin3C \
+    && git checkout ${BIN3C_COMMIT} \
+    && /opt/conda/envs/bin3c/bin/pip install .
+
+# Sanity check — confirm the `bin3C` entry point installed correctly
+RUN bin3C --help > /dev/null 2>&1 || python -c "import bin3C; print('bin3C module importable')"
+
+WORKDIR /data
+ENTRYPOINT ["/bin/bash"]

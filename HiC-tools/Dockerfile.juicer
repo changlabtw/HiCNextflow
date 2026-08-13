@@ -1,0 +1,70 @@
+# ==============================================================================
+# Dockerfile.juicer
+# Juicer / Juicer Tools (https://github.com/aidenlab/juicer,
+# https://github.com/aidenlab/juicer_tools) — Branch B default mapper,
+# .hic matrix builder (`pre`), HiCCUPS loop caller, Arrowhead TAD caller.
+#
+# Built on an NVIDIA CUDA base so `singularity exec --nv` can expose the GPU
+# to HiCCUPS's Java/CUDA kernel inside the container. Arrowhead/`pre` run
+# fine on the CPU path of this same image — no separate CPU-only image needed.
+#
+# Build:   docker build -t juicer:1.9 -f Dockerfile.juicer .
+# Convert: singularity build juicer_1.9.sif docker-daemon://juicer:1.9
+# ==============================================================================
+FROM nvidia/cuda:11.2.2-runtime-ubuntu20.04
+
+LABEL org.opencontainers.image.title="Juicer / Juicer Tools" \
+      org.opencontainers.image.version="1.9" \
+      org.opencontainers.image.source="https://github.com/aidenlab/juicer"
+
+SHELL ["/bin/bash", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        openjdk-8-jdk \
+        bwa \
+        samtools \
+        wget \
+        git \
+        ca-certificates \
+        unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64 \
+    PATH=/usr/lib/jvm/java-8-openjdk-amd64/bin:${PATH}
+
+# Juicer's CPU-side scripts (juicer_tools is what actually needs GPU; the
+# shell wrapper scripts under CPU/ are used for the alignment sub-commands
+# some sites also invoke from this image).
+ARG JUICER_VERSION=1.9
+RUN git clone --depth 1 --branch ${JUICER_VERSION} \
+        https://github.com/aidenlab/juicer.git /opt/juicer-src \
+    && mkdir -p /opt/juicer \
+    && cp -r /opt/juicer-src/CPU/* /opt/juicer/ \
+    && chmod +x /opt/juicer/*.sh /opt/juicer/common/*.sh 2>/dev/null || true
+
+# juicer_tools.jar — download a pinned release from the aidenlab releases
+# page. VERIFY this URL/version against
+# https://github.com/aidenlab/juicer/wiki/Download before building in
+# production; release asset paths have moved between major versions.
+ARG JUICER_TOOLS_VERSION=1.22.01
+RUN wget -q -O /opt/juicer/juicer_tools.jar \
+        "https://github.com/aidenlab/JuicerTools/releases/download/v${JUICER_TOOLS_VERSION}/juicer_tools.${JUICER_TOOLS_VERSION}.jar" \
+    || wget -q -O /opt/juicer/juicer_tools.jar \
+        "https://s3.amazonaws.com/hicfiles.tc4ga.com/public/juicer/juicer_tools.${JUICER_TOOLS_VERSION}.jar"
+# NOTE: if BOTH sources 404 (aidenlab has changed hosting more than once),
+# download juicer_tools.jar manually from the wiki link above and `COPY`
+# it in instead of relying on wget — see the commented block below.
+# COPY juicer_tools.jar /opt/juicer/juicer_tools.jar
+
+ENV PATH=/opt/juicer:${PATH}
+
+# Sanity checks
+RUN java -version \
+    && bwa 2>&1 | head -1 \
+    && samtools --version | head -1 \
+    && test -s /opt/juicer/juicer_tools.jar \
+    && java -jar /opt/juicer/juicer_tools.jar -h 2>&1 | head -5
+
+WORKDIR /data
+ENTRYPOINT ["/bin/bash"]

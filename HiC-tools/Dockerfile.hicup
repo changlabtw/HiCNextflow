@@ -1,0 +1,43 @@
+# ==============================================================================
+# Dockerfile.hicup
+# HiCUP (https://github.com/StevenWingett/HiCUP) — Branch A alternative.
+# Perl-based pipeline: hicup_mapper, hicup_digester, hicup_filter,
+# hicup_deduplicator, wrapped by the hicup driver script. Uses Bowtie2
+# (or BWA) underneath and R for QC plots.
+#
+# Build:   docker build -t hicup:0.9.2 -f Dockerfile.hicup .
+# Convert: singularity build hicup_0.9.2.sif docker-daemon://hicup:0.9.2
+# ==============================================================================
+FROM condaforge/mambaforge:23.3.1-1
+
+LABEL org.opencontainers.image.title="HiCUP" \
+      org.opencontainers.image.version="0.9.2" \
+      org.opencontainers.image.source="https://github.com/StevenWingett/HiCUP"
+
+SHELL ["/bin/bash", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# HiCUP + its runtime deps (perl, bowtie2, samtools, R) are all packaged in
+# bioconda — no source build needed.
+RUN mamba create -y -n hicup -c bioconda -c conda-forge \
+        hicup=0.9.2 \
+        bowtie2=2.4.5 \
+        samtools=1.15 \
+        r-base=4.2 \
+        perl \
+    && mamba clean -afy
+
+ENV PATH=/opt/conda/envs/hicup/bin:${PATH}
+
+# Sanity checks
+RUN hicup --version \
+    && hicup_digester --help > /dev/null \
+    && bowtie2 --version | head -1 \
+    && samtools --version | head -1
+
+WORKDIR /data
+ENTRYPOINT ["/bin/bash"]

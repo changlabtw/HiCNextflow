@@ -1,0 +1,59 @@
+# ==============================================================================
+# Dockerfile.hicpipe
+# Hi-CPIPE — the Yaffe & Tanay "hicpipe" probabilistic bias-correction
+# pipeline (Yaffe & Tanay, Nature Genetics 2011), distributed as a C/Perl
+# source tarball from the Tanay lab (not on bioconda/PyPI/GitHub releases).
+# Source: http://www.wisdom.weizmann.ac.il/~eitany/hicpipe/hicpipe_0.93.tar.gz
+#
+# IMPORTANT: this tarball predates modern packaging conventions (no
+# Makefile-based `make install`, no version-pinned release tags on GitHub).
+# The exact build commands below are a best-effort reconstruction from the
+# tool's known C+Perl structure — INSPECT the tarball's own README/INSTALL
+# after downloading and adjust the `make`/`perl Makefile.PL` lines to match
+# what's actually inside before trusting this image in production. If your
+# group has since moved this pipeline to a maintained fork (e.g.
+# ChenFengling/HiCpipe, a different BL-Hi-C-oriented tool of a similar name),
+# swap the ARG SOURCE_URL below and adjust the build stanza accordingly —
+# don't assume the two "HiCpipe"s are interchangeable.
+#
+# Build:   docker build -t hicpipe:0.93 -f Dockerfile.hicpipe .
+# Convert: singularity build hicpipe_0.93.sif docker-daemon://hicpipe:0.93
+# ==============================================================================
+FROM debian:bullseye-slim
+
+LABEL org.opencontainers.image.title="Hi-CPIPE (Yaffe-Tanay hicpipe)" \
+      org.opencontainers.image.version="0.93" \
+      org.opencontainers.image.source="http://www.wisdom.weizmann.ac.il/~eitany/hicpipe/"
+
+SHELL ["/bin/bash", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        perl \
+        libperl-dev \
+        wget \
+        ca-certificates \
+        r-base-core \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG SOURCE_URL=http://www.wisdom.weizmann.ac.il/~eitany/hicpipe/hicpipe_0.93.tar.gz
+RUN wget -q -O /tmp/hicpipe.tar.gz "${SOURCE_URL}" \
+    && mkdir -p /opt/hicpipe \
+    && tar -xzf /tmp/hicpipe.tar.gz -C /opt/hicpipe --strip-components=1 \
+    && rm /tmp/hicpipe.tar.gz
+
+WORKDIR /opt/hicpipe
+
+# Best-effort build: try a top-level `make` first (the C components of
+# hicpipe 0.9x are known to build this way per the bundled source tree);
+# fall back to Perl's own build for any bundled Perl modules. VERIFY against
+# the tarball's own docs — do not ship this stage unmodified without checking.
+RUN (make 2>&1 | tee /opt/hicpipe/build.log) || true
+RUN if [ -f Makefile.PL ]; then perl Makefile.PL && make && make install; fi
+
+ENV PATH=/opt/hicpipe/perl:/opt/hicpipe/bin:${PATH} \
+    PERL5LIB=/opt/hicpipe/perl:${PERL5LIB}
+
+WORKDIR /data
+ENTRYPOINT ["/bin/bash"]

@@ -1,0 +1,51 @@
+# ==============================================================================
+# Dockerfile.hickit
+# Hickit (https://github.com/lh3/hickit) — Branch B alternative: native
+# ligation-aware joint mapper / .pairs toolkit for (sc)Hi-C, written in C
+# by Heng Li. Builds with a plain `make` against zlib.
+#
+# Build:   docker build -t hickit:latest -f Dockerfile.hickit .
+# Convert: singularity build hickit_latest.sif docker-daemon://hickit:latest
+# ==============================================================================
+FROM debian:bullseye-slim AS build
+
+LABEL org.opencontainers.image.title="Hickit" \
+      org.opencontainers.image.source="https://github.com/lh3/hickit"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        zlib1g-dev \
+        git \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG HICKIT_COMMIT=master
+RUN git clone --recursive https://github.com/lh3/hickit.git /opt/hickit-src \
+    && cd /opt/hickit-src \
+    && git checkout ${HICKIT_COMMIT} \
+    && git submodule update --init --recursive \
+    && make
+
+FROM debian:bullseye-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        zlib1g \
+        k8 \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    || (apt-get update && apt-get install -y --no-install-recommends zlib1g ca-certificates && rm -rf /var/lib/apt/lists/*)
+# NOTE: k8 (the JS shell hickit.js needs) is not always in Debian's default
+# repos on every release — if the `k8` package install above fails, pull the
+# static k8 binary instead:
+#   RUN wget -qO- https://github.com/attractivechaos/k8/releases/download/v0.2.5/k8-0.2.5.tar.bz2 \
+#     | tar -xj && cp k8-0.2.5/k8-`uname -s`-`uname -m` /usr/local/bin/k8
+
+COPY --from=build /opt/hickit-src/hickit /usr/local/bin/hickit
+COPY --from=build /opt/hickit-src/hickit.js /usr/local/bin/hickit.js
+
+RUN chmod +x /usr/local/bin/hickit /usr/local/bin/hickit.js
+
+# Sanity check
+RUN /usr/local/bin/hickit 2>&1 | head -3 || true
+
+WORKDIR /data
+ENTRYPOINT ["/bin/bash"]

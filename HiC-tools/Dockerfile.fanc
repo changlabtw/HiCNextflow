@@ -1,0 +1,46 @@
+# ==============================================================================
+# Dockerfile.fanc
+# FAN-C (https://github.com/vaquerizaslab/fanc) — insulation score /
+# compartment / TAD boundary analysis. Pure pip install; FAN-C pulls in its
+# own numpy/scipy/pandas/pysam/genomic-tools stack.
+#
+# Build:   docker build -t fanc:0.9.25 -f Dockerfile.fanc .
+# Convert: singularity build fanc_0.9.25.sif docker-daemon://fanc:0.9.25
+# ==============================================================================
+FROM condaforge/mambaforge:23.3.1-1
+
+LABEL org.opencontainers.image.title="FAN-C" \
+      org.opencontainers.image.version="0.9.25" \
+      org.opencontainers.image.source="https://github.com/vaquerizaslab/fanc"
+
+SHELL ["/bin/bash", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# FAN-C recommends a dedicated conda env (its docs note some deps — pysam,
+# pytables — are easier to resolve via conda-forge/bioconda than pure pip).
+RUN mamba create -y -n fanc -c bioconda -c conda-forge \
+        python=3.9 \
+        pip \
+        pysam \
+        pytables \
+        numpy \
+        scipy \
+        pandas \
+        matplotlib \
+    && mamba clean -afy
+
+ENV PATH=/opt/conda/envs/fanc/bin:${PATH}
+
+ARG FANC_VERSION=0.9.25
+RUN pip install "fanc==${FANC_VERSION}"
+
+# Sanity check
+RUN fanc --version && python -c "import fanc; print('fanc module OK')"
+
+WORKDIR /data
+ENTRYPOINT ["/bin/bash"]

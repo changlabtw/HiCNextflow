@@ -1,0 +1,68 @@
+# ==============================================================================
+# Dockerfile.hicpro
+# HiC-Pro (https://github.com/nservant/HiC-Pro) — Branch A default pipeline.
+# Provides: bwa, bowtie2, samtools, python3 + HiC-Pro utils (mergeSAM.py,
+# mapped_2_hic_fragments.py, hicpro2juicebox.sh, digest_genome.py) and the
+# main HiC-Pro.sh driver.
+#
+# Build:   docker build -t hicpro:3.1.0 -f Dockerfile.hicpro .
+# Convert: singularity build hicpro_3.1.0.sif docker-daemon://hicpro:3.1.0
+#          (or push to a registry and `singularity pull docker://...`)
+# ==============================================================================
+FROM condaforge/mambaforge:23.3.1-1 AS build
+
+LABEL org.opencontainers.image.title="HiC-Pro" \
+      org.opencontainers.image.version="3.1.0" \
+      org.opencontainers.image.source="https://github.com/nservant/HiC-Pro"
+
+SHELL ["/bin/bash", "-c"]
+ENV DEBIAN_FRONTEND=noninteractive
+
+# System build deps: HiC-Pro's Makefile compiles a small C extension
+# (cutsite_trimming) and needs g++/make; git to fetch the release tag.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        git \
+        ca-certificates \
+        wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Conda env with the runtime deps HiC-Pro's INSTALL.rst lists: bowtie2, bwa,
+# samtools, python3 + pysam/bx-python/numpy/scipy, and R for the QC plots.
+RUN mamba create -y -n hicpro -c bioconda -c conda-forge \
+        python=3.9 \
+        bowtie2=2.4.5 \
+        bwa=0.7.17 \
+        samtools=1.15 \
+        r-base=4.2 \
+        pysam \
+        bx-python \
+        numpy \
+        scipy \
+    && mamba clean -afy
+
+ENV PATH=/opt/conda/envs/hicpro/bin:${PATH}
+
+# Build HiC-Pro from the tagged release (pin the tag; verify it against
+# https://github.com/nservant/HiC-Pro/releases before building in production)
+ARG HICPRO_VERSION=3.1.0
+RUN git clone --depth 1 --branch v${HICPRO_VERSION} \
+        https://github.com/nservant/HiC-Pro.git /opt/HiC-Pro \
+    && cd /opt/HiC-Pro \
+    && make configure prefix=/opt/HiC-Pro-install \
+    && make install
+
+ENV PATH=/opt/HiC-Pro-install/bin:/opt/HiC-Pro-install/bin/utils:${PATH} \
+    HICPRO_UTILS=/opt/HiC-Pro-install/bin/utils
+
+# Sanity checks — fail the build early if key entry points are missing.
+RUN bwa 2>&1 | head -1 \
+    && samtools --version | head -1 \
+    && python3 -c "import pysam, bx; print('pysam/bx-python OK')" \
+    && test -f "${HICPRO_UTILS}/mergeSAM.py" \
+    && test -f "${HICPRO_UTILS}/mapped_2_hic_fragments.py" \
+    && test -f "${HICPRO_UTILS}/digest_genome.py" \
+    && test -f "${HICPRO_UTILS}/hicpro2juicebox.sh"
+
+WORKDIR /data
+ENTRYPOINT ["/bin/bash"]
