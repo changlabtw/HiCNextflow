@@ -8,7 +8,7 @@ used by `config/containers.env` and every `scripts/*.sbatch` job.
 | `Dockerfile.hicpro` | HiC-Pro 3.1.0 | `bwa`, `samtools`, `mergeSAM.py`, `mapped_2_hic_fragments.py`, `digest_genome.py`, `hicpro2juicebox.sh` |
 | `Dockerfile.hicup` | HiCUP 0.9.2 | `hicup`, `hicup_mapper`, `hicup_digester`, `bowtie2`, `samtools` |
 | `Dockerfile.juicer` | Juicer / Juicer Tools 1.9 (CUDA base) | `bwa`, `juicer_tools.jar` (`pre`, `hiccups`, `arrowhead`) |
-| `Dockerfile.hicpipe` | Hi-CPIPE (Yaffe-Tanay hicpipe 0.93) | C/Perl bias-correction binaries — **verify build stanza against the tarball's own docs, see comments in the file** |
+| `Dockerfile.hicpipe` | Hi-CPIPE (ChenFengling/HiCpipe, BL-Hi-C) | Wraps `bwa` + `HiC-Pro` + `Juicer` (`pre`/`dump`) for mapping→valid pairs→`.hic`→dense matrix, plus R-based compartment/TAD calling |
 | `Dockerfile.hickit` | Hickit | `hickit`, `hickit.js` |
 | `Dockerfile.bin3c` | bin3C | `bin3C` CLI |
 | `Dockerfile.fanc` | FAN-C 0.9.25 | `fanc` CLI + Python module |
@@ -40,7 +40,7 @@ Once you have `.sif` files, point `../config/containers.env` at them:
 export HICPRO_SIF=/opt/containers/hicpro_3.1.0.sif
 export HICUP_SIF=/opt/containers/hicup_0.9.2.sif
 export JUICER_SIF=/opt/containers/juicer_1.9.sif
-export HICPIPE_SIF=/opt/containers/hicpipe_0.93.sif
+export HICPIPE_SIF=/opt/containers/hicpipe_latest.sif
 export HICKIT_SIF=/opt/containers/hickit_latest.sif
 export BIN3C_SIF=/opt/containers/bin3c_latest.sif
 export FANC_SIF=/opt/containers/fanc_0.9.25.sif
@@ -58,15 +58,12 @@ export FANC_SIF=/opt/containers/fanc_0.9.25.sif
   than once). If both `wget` sources in the file 404, download the jar
   manually from https://github.com/aidenlab/juicer/wiki/Download and `COPY`
   it in instead — a commented-out `COPY` line is already there.
-- **`Dockerfile.hicpipe`**: this is the classic Yaffe & Tanay `hicpipe`
-  package (C + Perl, Nature Genetics 2011), distributed as a plain tarball
-  with no GitHub releases or bioconda recipe. The build stanza is a
-  best-effort reconstruction — open the tarball after downloading and check
-  its actual `README`/`INSTALL` before relying on the `make` step as written.
-  If your team is actually using a different, more modern "Hi-CPIPE" (e.g.
-  a site-internal tool, or the unrelated `ChenFengling/HiCpipe` BL-Hi-C
-  wrapper around Juicer+HiC-Pro), swap in that source instead — the two
-  tools are not interchangeable despite the similar name.
+- **`Dockerfile.hicpipe`**: Hi-CPIPE is **`ChenFengling/HiCpipe`**
+  (https://github.com/ChenFengling/HiCpipe), a BL-Hi-C pipeline built on
+  HiC-Pro + Juicer — confirmed directly from the repo's README, not
+  guessed. It has no tags or published releases, so the Dockerfile pins an
+  explicit commit (`af5e908`) rather than floating on `master`; re-verify
+  that's still current before a production build.
 - **GPU image size**: `Dockerfile.juicer` starts from an NVIDIA CUDA base
   image (~1-2 GB before adding tools) since HiCCUPS needs `--nv` GPU
   passthrough. If you only ever run Arrowhead/`pre` and never HiCCUPS on

@@ -19,6 +19,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         ca-certificates \
+        zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # FAN-C recommends a dedicated conda env (its docs note some deps — pysam,
@@ -32,15 +33,17 @@ RUN mamba create -y -n fanc -c bioconda -c conda-forge \
         scipy \
         pandas \
         matplotlib \
+        bedtools \
+        pybedtools \
     && mamba clean -afy
 
 ENV PATH=/opt/conda/envs/fanc/bin:${PATH}
 
 ARG FANC_VERSION=0.9.25
-RUN pip install "fanc==${FANC_VERSION}"
+RUN pip install "biopython<1.80" "fanc==${FANC_VERSION}"
 
 # Sanity check
-RUN fanc --version && python -c "import fanc; print('fanc module OK')"
+RUN fanc --version && python -c "import fanc, pybedtools; print('fanc module + pybedtools OK')"
 
 WORKDIR /data
 ENTRYPOINT ["/bin/bash"]

@@ -1,59 +1,150 @@
 # ==============================================================================
 # Dockerfile.hicpipe
-# Hi-CPIPE — the Yaffe & Tanay "hicpipe" probabilistic bias-correction
-# pipeline (Yaffe & Tanay, Nature Genetics 2011), distributed as a C/Perl
-# source tarball from the Tanay lab (not on bioconda/PyPI/GitHub releases).
-# Source: http://www.wisdom.weizmann.ac.il/~eitany/hicpipe/hicpipe_0.93.tar.gz
+# Hi-CPIPE = ChenFengling/HiCpipe (https://github.com/ChenFengling/HiCpipe),
+# "an efficient Hi-C data processing pipeline" for BL-Hi-C (bridge-linker
+# Hi-C). Confirmed from the repo's own README (2026-08-14): it wraps bwa,
+# HiC-Pro, and Juicer's `pre`/`dump` for mapping -> valid pairs -> .hic ->
+# dense matrix, then layers on compartment calling (R, `eigen`), TAD calling
+# (insulation score, R), contact-domain-boundary calling (HiCDB), and loop
+# calling (HiCloop), plus a shell-based QC report.
 #
-# IMPORTANT: this tarball predates modern packaging conventions (no
-# Makefile-based `make install`, no version-pinned release tags on GitHub).
-# The exact build commands below are a best-effort reconstruction from the
-# tool's known C+Perl structure — INSPECT the tarball's own README/INSTALL
-# after downloading and adjust the `make`/`perl Makefile.PL` lines to match
-# what's actually inside before trusting this image in production. If your
-# group has since moved this pipeline to a maintained fork (e.g.
-# ChenFengling/HiCpipe, a different BL-Hi-C-oriented tool of a similar name),
-# swap the ARG SOURCE_URL below and adjust the build stanza accordingly —
-# don't assume the two "HiCpipe"s are interchangeable.
+# CORRECTION from the previous version of this file: "Hi-CPIPE" is NOT the
+# Yaffe & Tanay 2011 `hicpipe` C/Perl bias-correction tool — that tarball is
+# gone from the Weizmann server. It's this actively-maintained BL-Hi-C
+# pipeline instead. Source confirmed via the repo's GitHub page.
 #
-# Build:   docker build -t hicpipe:0.93 -f Dockerfile.hicpipe .
-# Convert: singularity build hicpipe_0.93.sif docker-daemon://hicpipe:0.93
+# ⚠ IMPORTANT — MATLAB dependency (unresolved, read before building):
+# GitHub reports this repo as 45.7% MATLAB. The published README documents
+# CDB calling as using "HiCDB" (Chen et al., Nucleic Acids Research 2018),
+# whose reference implementation is MATLAB-based. The repo has "0 Tags" and
+# "No releases published" — meaning there is no compiled/standalone version
+# of any MATLAB components (no `mcc`-compiled binary + free MATLAB Runtime
+# path available). Running the CDB step for real therefore requires an
+# actual licensed MATLAB install, which:
+#   - I cannot bundle into this image (proprietary, per-seat licensed), and
+#   - is NOT something I can verify the exact entry point/script for from
+#     the README alone, since the MATLAB source files live in subfolders
+#     (compartment/, utility/, validpair2resolution/, etc.) whose contents
+#     weren't visible in the page you provided.
+# The build below installs everything needed for the OPEN parts of the
+# pipeline (mapping through .hic generation, compartment PC1 via R `eigen`,
+# insulation-score TAD calling, QC) and stops short of guessing at the
+# MATLAB CDB step. See the commented MATLAB stage at the bottom for how to
+# extend this yourself if you have a MATLAB license — do not treat that
+# stage as tested.
+#
+# Build:   docker build -t hicpipe:latest -f Dockerfile.hicpipe .
+# Convert: singularity build hicpipe_latest.sif docker-daemon://hicpipe:latest
 # ==============================================================================
-FROM debian:bullseye-slim
+FROM condaforge/mambaforge:23.3.1-1
 
-LABEL org.opencontainers.image.title="Hi-CPIPE (Yaffe-Tanay hicpipe)" \
-      org.opencontainers.image.version="0.93" \
-      org.opencontainers.image.source="http://www.wisdom.weizmann.ac.il/~eitany/hicpipe/"
+LABEL org.opencontainers.image.title="Hi-CPIPE (ChenFengling/HiCpipe, BL-Hi-C)" \
+      org.opencontainers.image.source="https://github.com/ChenFengling/HiCpipe"
 
 SHELL ["/bin/bash", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
-        perl \
-        libperl-dev \
+        git \
         wget \
+        unzip \
         ca-certificates \
-        r-base-core \
+        openjdk-8-jdk \
     && rm -rf /var/lib/apt/lists/*
 
-ARG SOURCE_URL=http://www.wisdom.weizmann.ac.il/~eitany/hicpipe/hicpipe_0.93.tar.gz
-RUN wget -q -O /tmp/hicpipe.tar.gz "${SOURCE_URL}" \
-    && mkdir -p /opt/hicpipe \
-    && tar -xzf /tmp/hicpipe.tar.gz -C /opt/hicpipe --strip-components=1 \
-    && rm /tmp/hicpipe.tar.gz
+ENV JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64 \
+    PATH=/usr/lib/jvm/java-8-openjdk-amd64/bin:${PATH}
 
-WORKDIR /opt/hicpipe
+# --- Runtime deps confirmed by the README's own tooling table ---
+# mapping: bwa | filter: HiC-Pro | pair2hic/hic2map: Juicer (pre/dump) |
+# compartment: R (eigen, base stats — no extra package confirmed) |
+# TAD: R (insulation score — insu_header1.r is bundled in-repo)
+RUN mamba create -y -n hicpipe -c bioconda -c conda-forge \
+        python=3.9 \
+        bwa=0.7.17 \
+        samtools=1.15 \
+        bowtie2=2.4.5 \
+        r-base=4.2 \
+        r-ggplot2 \
+        r-rcolorbrewer \
+        pysam \
+        bx-python \
+        numpy \
+        scipy \
+        iced \
+    && mamba clean -afy
 
-# Best-effort build: try a top-level `make` first (the C components of
-# hicpipe 0.9x are known to build this way per the bundled source tree);
-# fall back to Perl's own build for any bundled Perl modules. VERIFY against
-# the tarball's own docs — do not ship this stage unmodified without checking.
-RUN (make 2>&1 | tee /opt/hicpipe/build.log) || true
-RUN if [ -f Makefile.PL ]; then perl Makefile.PL && make && make install; fi
+ENV PATH=/opt/conda/envs/hicpipe/bin:${PATH}
 
-ENV PATH=/opt/hicpipe/perl:/opt/hicpipe/bin:${PATH} \
-    PERL5LIB=/opt/hicpipe/perl:${PERL5LIB}
+# --- HiC-Pro, built from source (HiCpipe's `filter` stage wraps this directly) ---
+ARG HICPRO_VERSION=3.1.0
+RUN git clone --depth 1 --branch v${HICPRO_VERSION} \
+        https://github.com/nservant/HiC-Pro.git /opt/HiC-Pro \
+    && mkdir -p /opt/HiC-Pro-install \
+    && cd /opt/HiC-Pro \
+    && make configure prefix=/opt/HiC-Pro-install \
+    && make install
+
+ENV PATH=/opt/HiC-Pro-install/HiC-Pro_${HICPRO_VERSION}/bin:/opt/HiC-Pro-install/HiC-Pro_${HICPRO_VERSION}/bin/utils:${PATH} \
+    HICPRO_UTILS=/opt/HiC-Pro-install/HiC-Pro_${HICPRO_VERSION}/bin/utils \
+    HICPRO_SCRIPTS=/opt/HiC-Pro-install/HiC-Pro_${HICPRO_VERSION}/scripts
+
+
+# --- Juicer Tools jar, for the `pair2hic` (pre) and `hic2map` (dump) stages ---
+# Same caveat as docker/Dockerfile.juicer: this asset URL has moved before —
+# verify against https://github.com/aidenlab/juicer/wiki/Download if it 404s.
+ARG JUICER_TOOLS_VERSION=1.22.01
+RUN mkdir -p /opt/juicer \
+    && wget -q -O /opt/juicer/juicer_tools.jar \
+        "https://s3.amazonaws.com/hicfiles.tc4ga.com/public/juicer/juicer_tools_${JUICER_TOOLS_VERSION}.jar" \
+    && test -s /opt/juicer/juicer_tools.jar
+# NOTE: this is the only official host for the jar (confirmed against
+# https://github.com/aidenlab/juicer/wiki/Download). Filename uses an
+# UNDERSCORE before the version (juicer_tools_1.22.01.jar), not a dot.
+# If this source ever goes down, download juicer_tools.jar manually from
+# the wiki link above and `COPY` it in instead of relying on wget:
+# COPY juicer_tools.jar /opt/juicer/juicer_tools.jar
+
+ENV PATH=/opt/juicer:${PATH}
+
+# --- HiCpipe itself. No tags/releases exist (confirmed from the repo page),
+# so pin an explicit commit rather than floating on `master`. af5e908 is the
+# HEAD commit ("Update README.md", ~2 years old) as of the page you provided
+# — re-verify this is still current before building in production. ---
+ARG HICPIPE_COMMIT=af5e908
+RUN git clone https://github.com/ChenFengling/HiCpipe.git /opt/hicpipe-src \
+    && cd /opt/hicpipe-src \
+    && git checkout ${HICPIPE_COMMIT}
+
+ENV PATH=/opt/hicpipe-src:${PATH} \
+    HICPIPE_PATH=/opt/hicpipe-src
+
+# Sanity checks for the open-source portion of the toolchain
+RUN bwa 2>&1 | head -1 \
+    && samtools --version | head -1 \
+    && java -jar "${JUICER_TOOLS_JAR}" -h 2>&1 | head -3 \
+    && test -f /opt/hicpipe-src/main.sh \
+    && test -f /opt/hicpipe-src/subjob.sh \
+    && test -f /opt/hicpipe-src/HiCqc.sh \
+    && test -f /opt/hicpipe-src/compartment.r \
+    && test -f /opt/hicpipe-src/insu_header1.r \
+    && echo "HiCpipe (open-source components) present and entry scripts found"
+
+# ------------------------------------------------------------------------
+# OPTIONAL / UNTESTED: MATLAB Runtime stage for the CDB (HiCDB) step.
+# Uncomment and adapt ONLY if you hold a MATLAB license and have identified
+# the actual .m entry point inside compartment/ or utility/ — I could not
+# confirm either from the README alone. MATLAB Runtime (MCR) only helps if
+# the .m files were compiled with `mcc`; there is no evidence in this repo
+# that they were (no releases, no compiled binaries listed).
+#
+# ARG MCR_VERSION=R2022b
+# RUN wget -q https://ssd.mathworks.com/supportfiles/downloads/${MCR_VERSION}/Release/.../MCR_${MCR_VERSION}_glnxa64_installer.zip \
+#     && unzip MCR_${MCR_VERSION}_glnxa64_installer.zip -d mcr_installer \
+#     && mcr_installer/install -mode silent -agreeToLicense yes \
+#     && rm -rf MCR_${MCR_VERSION}_glnxa64_installer.zip mcr_installer
+# ------------------------------------------------------------------------
 
 WORKDIR /data
 ENTRYPOINT ["/bin/bash"]

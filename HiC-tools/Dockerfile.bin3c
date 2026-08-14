@@ -1,12 +1,5 @@
 # ==============================================================================
-# Dockerfile.bin3c
-# bin3C (https://github.com/cerebis/bin3C) — Branch B alternative used for
-# metagenomic / complex-community Hi-C contact binning (contig-level, not
-# chromosome-level). Python 2-era tool historically, but the maintained
-# branch targets Python 3 — pin the exact commit/tag you validate against.
-#
-# Build:   docker build -t bin3c:latest -f Dockerfile.bin3c .
-# Convert: singularity build bin3c_latest.sif docker-daemon://bin3c:latest
+# Dockerfile.bin3c (Python 2.7 版本 - 修復 Juicer Tools 下載與資料夾缺失問題)
 # ==============================================================================
 FROM condaforge/mambaforge:23.3.1-1
 
@@ -16,41 +9,72 @@ LABEL org.opencontainers.image.title="bin3C" \
 SHELL ["/bin/bash", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
 
+# 1. 安裝基礎編譯工具、curl、Git、C++ 開發環境與圖形庫系統依賴
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
+        curl \
         ca-certificates \
         build-essential \
+        g++ \
+        make \
+        libgl1-mesa-glx \
+        libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# bin3C's dependency set (numpy/scipy/pysam/networkx/python-louvain/tqdm/
-# PyYAML/biopython) per its setup.py — installed via conda-forge/bioconda
-# for compiled deps (pysam, htslib) plus pip for the package itself, since
-# bin3C is not published on bioconda/PyPI as an installable package.
+# 2. 建立 Python 2.7 環境
+#    使用 Mamba 安裝包含 C/C++ / LLVM 預編譯的核心科學計算與繪圖套件
 RUN mamba create -y -n bin3c -c bioconda -c conda-forge \
-        python=3.9 \
-        numpy \
-        scipy \
+        python=2.7 \
+        biopython=1.76 \
+        networkx=1.11 \
         pysam \
-        networkx \
-        pyyaml \
-        tqdm \
-        biopython \
+        scipy \
+        numpy \
+        pandas \
+        matplotlib \
+        seaborn \
+        fastcluster \
+        llvmlite \
+        numba \
+        python-louvain \
         bwa \
         samtools \
+        openjdk \
     && mamba clean -afy
 
+# 將 bin3c 環境加入 PATH
 ENV PATH=/opt/conda/envs/bin3c/bin:${PATH}
 
-RUN /opt/conda/envs/bin3c/bin/pip install python-louvain
+# 設定 Matplotlib 為非互動式後端 (Agg)，防止無 GUI 環境繪圖時報錯
+ENV MPLBACKEND=Agg
+
+# 3. 先建立 /opt/juicer 目錄，再下載 Juicer Tools
+#    注意：官方檔名是 juicer_tools_<version>.jar（版本號前面是底線，不是點）
+ARG JUICER_TOOLS_VERSION=1.22.01
+RUN mkdir -p /opt/juicer \
+    && curl -fSL -A "Mozilla/5.0" \
+         -o /opt/juicer/juicer_tools.jar \
+         "https://s3.amazonaws.com/hicfiles.tc4ga.com/public/juicer/juicer_tools_${JUICER_TOOLS_VERSION}.jar" \
+    && test -s /opt/juicer/juicer_tools.jar
 
 ARG BIN3C_COMMIT=master
-RUN git clone --depth 1 https://github.com/cerebis/bin3C.git /opt/bin3C \
+
+# 4. 下載 bin3C、編譯 Infomap，並使用 pip 安裝剩餘純 Python 套件
+RUN git clone --recursive https://github.com/cerebis/bin3C.git /opt/bin3C \
     && cd /opt/bin3C \
     && git checkout ${BIN3C_COMMIT} \
-    && /opt/conda/envs/bin3c/bin/pip install .
+    && make -f Makefile.infomap \
+    && pip install --no-cache-dir --no-deps \
+        typing \
+        "pyyaml<6.0" \
+        "tqdm<4.65.0" \
+        sparse
 
-# Sanity check — confirm the `bin3C` entry point installed correctly
-RUN bin3C --help > /dev/null 2>&1 || python -c "import bin3C; print('bin3C module importable')"
+# 將 bin3C 腳本加入系統 PATH
+ENV PATH=/opt/bin3C:${PATH}
+
+# 5. 驗證 bin3C.py 是否可正常呼叫與載入模組
+RUN bin3C.py --help > /dev/null 2>&1 || python /opt/bin3C/bin3C.py --help
 
 WORKDIR /data
 ENTRYPOINT ["/bin/bash"]

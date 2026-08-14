@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
         ca-certificates \
         wget \
+        unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # Conda env with the runtime deps HiC-Pro's INSTALL.rst lists: bowtie2, bwa,
@@ -35,10 +36,13 @@ RUN mamba create -y -n hicpro -c bioconda -c conda-forge \
         bwa=0.7.17 \
         samtools=1.15 \
         r-base=4.2 \
+        r-ggplot2 \
+        r-rcolorbrewer \
         pysam \
         bx-python \
         numpy \
         scipy \
+        iced \
     && mamba clean -afy
 
 ENV PATH=/opt/conda/envs/hicpro/bin:${PATH}
@@ -48,19 +52,25 @@ ENV PATH=/opt/conda/envs/hicpro/bin:${PATH}
 ARG HICPRO_VERSION=3.1.0
 RUN git clone --depth 1 --branch v${HICPRO_VERSION} \
         https://github.com/nservant/HiC-Pro.git /opt/HiC-Pro \
+    && mkdir -p /opt/HiC-Pro-install \
     && cd /opt/HiC-Pro \
     && make configure prefix=/opt/HiC-Pro-install \
     && make install
 
-ENV PATH=/opt/HiC-Pro-install/bin:/opt/HiC-Pro-install/bin/utils:${PATH} \
-    HICPRO_UTILS=/opt/HiC-Pro-install/bin/utils
+ENV PATH=/opt/HiC-Pro-install/HiC-Pro_${HICPRO_VERSION}/bin:/opt/HiC-Pro-install/HiC-Pro_${HICPRO_VERSION}/bin/utils:${PATH} \
+    HICPRO_UTILS=/opt/HiC-Pro-install/HiC-Pro_${HICPRO_VERSION}/bin/utils \
+    HICPRO_SCRIPTS=/opt/HiC-Pro-install/HiC-Pro_${HICPRO_VERSION}/scripts
 
 # Sanity checks — fail the build early if key entry points are missing.
+# Note: mergeSAM.py / mapped_2hic_fragments.py are core pipeline scripts
+# installed under scripts/, NOT bin/utils/ (only digest_genome.py and
+# hicpro2juicebox.sh live there).
 RUN bwa 2>&1 | head -1 \
     && samtools --version | head -1 \
-    && python3 -c "import pysam, bx; print('pysam/bx-python OK')" \
-    && test -f "${HICPRO_UTILS}/mergeSAM.py" \
-    && test -f "${HICPRO_UTILS}/mapped_2_hic_fragments.py" \
+    && python3 -c "import pysam, bx, iced; print('pysam/bx-python/iced OK')" \
+    && Rscript -e 'library(ggplot2); library(RColorBrewer); cat("ggplot2/RColorBrewer OK\n")' \
+    && test -f "${HICPRO_SCRIPTS}/mergeSAM.py" \
+    && test -f "${HICPRO_SCRIPTS}/mapped_2hic_fragments.py" \
     && test -f "${HICPRO_UTILS}/digest_genome.py" \
     && test -f "${HICPRO_UTILS}/hicpro2juicebox.sh"
 

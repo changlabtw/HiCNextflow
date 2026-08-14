@@ -36,25 +36,28 @@ ENV JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64 \
 # Juicer's CPU-side scripts (juicer_tools is what actually needs GPU; the
 # shell wrapper scripts under CPU/ are used for the alignment sub-commands
 # some sites also invoke from this image).
-ARG JUICER_VERSION=1.9
+ARG JUICER_VERSION=1.6
 RUN git clone --depth 1 --branch ${JUICER_VERSION} \
         https://github.com/aidenlab/juicer.git /opt/juicer-src \
     && mkdir -p /opt/juicer \
     && cp -r /opt/juicer-src/CPU/* /opt/juicer/ \
-    && chmod +x /opt/juicer/*.sh /opt/juicer/common/*.sh 2>/dev/null || true
+    && (chmod +x /opt/juicer/*.sh /opt/juicer/common/*.sh 2>/dev/null || true) \
+    && test -d /opt/juicer
 
 # juicer_tools.jar — download a pinned release from the aidenlab releases
 # page. VERIFY this URL/version against
 # https://github.com/aidenlab/juicer/wiki/Download before building in
 # production; release asset paths have moved between major versions.
 ARG JUICER_TOOLS_VERSION=1.22.01
-RUN wget -q -O /opt/juicer/juicer_tools.jar \
-        "https://github.com/aidenlab/JuicerTools/releases/download/v${JUICER_TOOLS_VERSION}/juicer_tools.${JUICER_TOOLS_VERSION}.jar" \
-    || wget -q -O /opt/juicer/juicer_tools.jar \
-        "https://s3.amazonaws.com/hicfiles.tc4ga.com/public/juicer/juicer_tools.${JUICER_TOOLS_VERSION}.jar"
-# NOTE: if BOTH sources 404 (aidenlab has changed hosting more than once),
-# download juicer_tools.jar manually from the wiki link above and `COPY`
-# it in instead of relying on wget — see the commented block below.
+RUN mkdir -p /opt/juicer \
+    && wget -q -O /opt/juicer/juicer_tools.jar \
+        "https://s3.amazonaws.com/hicfiles.tc4ga.com/public/juicer/juicer_tools_${JUICER_TOOLS_VERSION}.jar" \
+    && test -s /opt/juicer/juicer_tools.jar
+# NOTE: this is the only official host for the jar (confirmed against
+# https://github.com/aidenlab/juicer/wiki/Download). Filename uses an
+# UNDERSCORE before the version (juicer_tools_1.22.01.jar), not a dot.
+# If this source ever goes down, download juicer_tools.jar manually from
+# the wiki link above and `COPY` it in instead of relying on wget:
 # COPY juicer_tools.jar /opt/juicer/juicer_tools.jar
 
 ENV PATH=/opt/juicer:${PATH}
