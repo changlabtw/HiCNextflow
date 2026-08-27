@@ -22,7 +22,7 @@ REFG_FILE38="Homo_sapiens_assembly38.fasta"
 VCF_GRCH38="Homo_sapiens_assembly38.known_indels.vcf"
 GRCH_PATH=${DATA_DIR}/${REF_DIR}
 VCF_PATH=${DATA_DIR}/reference_VCF
-
+RESTRICTION_BED=${GRCH_PATH}/"Homo_sapiens_assembly38_hindiii.bed" #預設為hindiii
 
 module load singularity/v3.8.7
 
@@ -38,6 +38,7 @@ export SINGULARITYENV_NXF_HOME="/home/dhllove/work_dir/.nextflow"
 export APPTAINERENV_NXF_HOME="/home/dhllove/work_dir/.nextflow"
 
 srun nextflow run hic_main.nf \
+        --restriction_bed ${RESTRICTION_BED} \
         -profile local ;
 
 
