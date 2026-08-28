@@ -12,6 +12,7 @@ params.reads        = "${params.fastq_dir}/*_{1,2}.fastq"
 params.fasta        = "/home/dhllove/NGS_DATA/reference_FASTA/Homo_sapiens_assembly38.fasta"
 params.outdir       = "/home/dhllove/Work/HiC"
 params.chrom_sizes  = "/home/dhllove/NGS_DATA/reference_FASTA/chrom.sizes"
+params.enzyme       = "HindIII"  
 params.restriction_bed = "/home/dhllove/NGS_DATA/reference_FASTA/Homo_sapiens_assembly38_hindiii.bed"
 params.sif1         = "/home/dhllove/DockerImage/bin3c_2.sif" // 指向包含工具鏈的 SIF 檔案
 params.sif2         = "/home/dhllove/DockerImage/hicpro.sif" // 指向包含工具鏈的 SIF 檔案
@@ -34,7 +35,7 @@ process ALIGN_BWA {
     val fasta
 
     output:
-    tuple val(sample_id), path("${sample_id}_aligned.bam"), path("${sample_id}_aligned.bam.bai"), emit: bam
+    tuple val(sample_id), path("${sample_id}_aligned.bam"), emit: bam
 
     script:
     def samtools_sort_threads = Math.max(1, Math.floor(task.cpus * 0.25).toInteger())
@@ -49,38 +50,12 @@ process ALIGN_BWA {
 	echo "=============================================="
 
     bwa-mem2 mem -5SP -t ${bwa_threads} ${fasta} ${reads[0]} ${reads[1]} | \\
-    samtools view -S -b -@ 4 - | \\
-    samtools sort -@ ${samtools_sort_threads} -m 2G -o ${sample_id}_aligned.bam -
-    
-    samtools index ${sample_id}_aligned.bam
+    samtools view -S -b -F 2316 -@ 4 - | \\
+    samtools sort -n -@ ${samtools_sort_threads} -m 2G -o ${sample_id}_aligned.bam -
+
     """
 }
 
-// 2. bin3C Processing (修復：在 input 明確拆出 sample_id 變數)
-process RUN_BIN3C {
-    tag "Sample: ${sample_id}"
-    container "${params.sif1}"
-    publishDir "${params.outdir}", mode: 'copy', saveAs: { filename -> "${sample_id}/bin3C/${filename}" }
-
-    input:
-    tuple val(sample_id), path(bam), path(bai)
-
-    output:
-    path "bin3C_out/*", emit: bin3c_results
-
-    script:
-    """
-	echo "=============================================="
-	echo "bin3C"
-	echo "Sample ID : ${sample_id}"
-	echo "BAM : ${bam}"
-	echo "=============================================="
-	
-    mkdir -p bin3C_out
-    bin3C.py mkmap -b ${bam} -o bin3C_out/map.h5
-    bin3C.py cluster -m bin3C_out/map.h5 -o bin3C_out
-    """
-}
 
 process RUN_HICPRO {
     tag "Sample: ${sample_id}"
@@ -88,7 +63,7 @@ process RUN_HICPRO {
     publishDir "${params.outdir}", mode: 'copy', saveAs: { filename -> "${sample_id}/hicpro/${filename}" }
 
     input:
-    tuple val(sample_id), path(bam), path(bai)
+    tuple val(sample_id), path(bam)
     path restriction_bed
     path chrom_sizes
 
@@ -103,22 +78,28 @@ process RUN_HICPRO {
     echo "Sample ID : ${sample_id}"
     echo "=============================================="
 
+    
     # Step 3.1: 使用 mapped_2hic_fragments.py 計算片段並篩選 validPairs
-    python /opt/HiC-Pro/bin/utils/mapped_2hic_fragments.py \\
+    python /opt/HiC-Pro/scripts/mapped_2hic_fragments.py \\
         -f ${restriction_bed} \\
         -r ${bam} \\
+        -a \\
         -o . \\
         -v
 
     # 確保產生的檔名符合 Sample ID
     if [ -f "out.validPairs" ]; then
         mv out.validPairs ${sample_id}.validPairs
+    elif [ -f "${sample_id}_aligned.validPairs" ]; then
+        mv ${sample_id}_aligned.validPairs ${sample_id}.validPairs
     fi
 
+    JUICER_JAR="/home/dhllove/Soft/juicer_tools.2.20.00.jar"
     # Step 3.2: 使用 hicpro2juicebox.sh 將 .validPairs 轉為 Juicer 格式
     /opt/HiC-Pro/bin/utils/hicpro2juicebox.sh \\
         -i ${sample_id}.validPairs \\
         -g ${chrom_sizes} \\
+        -j \${JUICER_JAR} \\
         -o .
 
     if [ -f "merged_nodups.txt" ]; then
@@ -226,12 +207,13 @@ workflow {
       ================================================================
        3 D   G E N O M E   P I P E L I N E (DSL2) - Local Node Mode
       ================================================================
-       Fastq Directory  : ${params.fastq_dir}
-       Reads Pattern    : ${params.reads}
-       Reference FASTA  : ${params.fasta}
-       Chrom Sizes File : ${params.chrom_sizes}
-       Restriction BED  : ${params.restriction_bed}
-       Output Dir       : ${params.outdir}
+       Fastq Directory    : ${params.fastq_dir}
+       Reads Pattern      : ${params.reads}
+       Reference FASTA    : ${params.fasta}
+       Chrom Sizes File   : ${params.chrom_sizes}
+       Restriction BED    : ${params.restriction_bed}
+	   Restriction enzyme : ${params.enzyme}
+       Output Dir         : ${params.outdir}
       ================================================================
    """
     ch_reads = Channel.fromFilePairs(params.reads, checkIfExists: true)
@@ -245,8 +227,7 @@ workflow {
         params.fasta
     )
 
-    // 2. 下游分流 (bin3C 與 HiC-Pro 同時平行處理)
-    RUN_BIN3C(ALIGN_BWA.out.bam)
+    //RUN_BIN3C(ALIGN_BWA.out.bam, params.fasta, params.enzyme)
     RUN_HICPRO(ALIGN_BWA.out.bam, ch_restriction_bed, ch_chrom_sizes)
 
     // 3. Juicer Pre (生成 .hic 矩陣)
