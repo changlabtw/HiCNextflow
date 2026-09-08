@@ -11,7 +11,7 @@
 # Build:   docker build -t juicer:1.9 -f Dockerfile.juicer .
 # Convert: singularity build juicer_1.9.sif docker-daemon://juicer:1.9
 # ==============================================================================
-FROM nvidia/cuda:11.2.2-runtime-ubuntu20.04
+FROM nvidia/cuda:11.2.2-devel-ubuntu20.04
 
 LABEL org.opencontainers.image.title="Juicer / Juicer Tools" \
       org.opencontainers.image.version="1.9" \
