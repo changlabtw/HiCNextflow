@@ -1,4 +1,4 @@
-![HiCNextflow Diagram](HiC_diagram.png)
+<!-- ![HiCNextflow Diagram](HiC_diagram.png) -->
 
 A high-performance, reproducible, and containerized pipeline for Hi-C data preprocessing and 3D genomic feature analysis built with **Nextflow DSL2**, **Singularity**, and **Docker**.
 
